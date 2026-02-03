@@ -253,7 +253,20 @@ class ICSToolkit:
                     # 收集用户输入
                     try:
                         reliability_req = float(input("  可靠性要求 (默认0.001): ") or "0.001")
-                        realtime_req = float(input("  实时性要求 (默认0.25): ") or "0.25")
+                        
+                        # 实时性要求只能输入特定值
+                        allowed_realtime_values = [0, 0.25, 0.5, 0.75, 1]
+                        while True:
+                            realtime_input = input(f"  实时性要求 (只能输入: 0, 0.25, 0.5, 0.75, 1，默认0.25): ") or "0.25"
+                            try:
+                                realtime_req = float(realtime_input)
+                                if realtime_req in allowed_realtime_values:
+                                    break
+                                else:
+                                    print(f"  ✗ 输入值 {realtime_req} 无效！请输入以下值之一: {', '.join(map(str, allowed_realtime_values))}")
+                            except ValueError:
+                                print(f"  ✗ 输入格式错误！请输入数字")
+                        
                         info_security_req = float(input("  信息安全性要求 (默认1e-5): ") or "1e-5")
                         
                         # 添加required字段
@@ -332,9 +345,9 @@ class ICSToolkit:
                 
                 # 判断是否满足要求
                 meets_req = (
-                    func['actual']['reliability'] <= func['required']['reliability'] and
-                    func['actual']['realtime'] <= func['required']['realtime'] and
-                    func['actual']['info_security'] <= func['required']['info_security']
+                    func['actual']['reliability'] >= func['required']['reliability'] and
+                    func['actual']['realtime'] >= func['required']['realtime'] and
+                    func['actual']['info_security'] >= func['required']['info_security']
                 )
                 
                 status = "✓ 满足要求" if meets_req else "✗ 不满足要求"

@@ -244,7 +244,7 @@ class SecurityMeasuresSelector:
             # 检查是否满足要求
             satisfied = (
                 final_values["reliability"] >= required_values["reliability"] and
-                final_values["realtime"] <= required_values["realtime"] and
+                final_values["realtime"] >= required_values["realtime"] and
                 final_values["info_security"] >= required_values["info_security"]
             )
             
@@ -382,7 +382,7 @@ class SecurityMeasuresSelector:
                     # 检查是否满足要求
                     satisfied = (
                         final_values["reliability"] >= required_values["reliability"] and
-                        final_values["realtime"] <= required_values["realtime"] and
+                        final_values["realtime"] >= required_values["realtime"] and
                         final_values["info_security"] >= required_values["info_security"]
                     )
                     
@@ -519,7 +519,7 @@ def main():
             print(f"    可靠性: {fv['reliability']:.6f} "
                   f"{'✓' if fv['reliability'] >= test_case['required']['reliability'] else '✗'}")
             print(f"    实时性: {fv['realtime']:.6f} "
-                  f"{'✓' if fv['realtime'] <= test_case['required']['realtime'] else '✗'}")
+                  f"{'✓' if fv['realtime'] >= test_case['required']['realtime'] else '✗'}")
             print(f"    信息安全性: {fv['info_security']:.10f} "
                   f"{'✓' if fv['info_security'] >= test_case['required']['info_security'] else '✗'}")
             print(f"  满足要求: {'✓ 是' if combo.get('satisfied') else '✗ 否'}")
