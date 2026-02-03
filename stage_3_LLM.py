@@ -7,7 +7,6 @@
 """
 
 import json
-import time
 from typing import List, Dict, Any, Set, Optional
 from security_measures_selector import SecurityMeasuresSelector
 from itertools import combinations
@@ -17,7 +16,6 @@ from llm_workflow_base import (
     DataLoaderMixin,
     UserInteractionMixin
 )
-from log_utils import setup_logging, teardown_logging
 
 
 class MeasuresSelectionWorkflow(ToolBasedWorkflow):
@@ -328,7 +326,7 @@ class GlobalMeasuresSelector(LLMWorkflowBase, DataLoaderMixin):
             
             satisfied = (
                 final_values["reliability"] >= func['required']['reliability'] and
-                final_values["realtime"] >= func['required']['realtime'] and
+                final_values["realtime"] <= func['required']['realtime'] and
                 final_values["info_security"] >= func['required']['info_security']
             )
             
@@ -398,13 +396,10 @@ class GlobalMeasuresSelector(LLMWorkflowBase, DataLoaderMixin):
         print(f"\n总共检查了 {total_checked} 个组合")
         print(f"找到 {len(valid_global_combinations)} 个满足所有安全功能的组合")
         
-        # 保存过滤前的所有组合
-        all_valid_combinations_count = len(valid_global_combinations)
-        
         # 过滤最小集合
-        minimal_combinations = []
         if return_minimal_only and valid_global_combinations:
             print(f"\n正在过滤，只保留最小集合...")
+            minimal_combinations = []
             
             for i, combo1 in enumerate(valid_global_combinations):
                 is_minimal = True
@@ -423,22 +418,6 @@ class GlobalMeasuresSelector(LLMWorkflowBase, DataLoaderMixin):
                     minimal_combinations.append(combo1)
             
             print(f"过滤后保留 {len(minimal_combinations)} 个最小集合")
-            
-            # 保存过滤详情
-            self.save_json(
-                data={
-                    "summary": {
-                        "total_combinations_before_filter": all_valid_combinations_count,
-                        "minimal_combinations_after_filter": len(minimal_combinations),
-                        "filtered_out_count": all_valid_combinations_count - len(minimal_combinations)
-                    },
-                    "all_valid_combinations": valid_global_combinations,
-                    "minimal_combinations": minimal_combinations
-                },
-                filename="output/stage 3/minimal_filter_details.json"
-            )
-            print(f"✅ 已保存过滤详情到: output/stage 3/minimal_filter_details.json")
-            
             valid_global_combinations = minimal_combinations
         
         valid_global_combinations.sort(key=lambda x: (x["size"], [m["name"] for m in x["measures"]]))
@@ -449,9 +428,7 @@ class GlobalMeasuresSelector(LLMWorkflowBase, DataLoaderMixin):
             "total_count": len(valid_global_combinations),
             "return_minimal_only": return_minimal_only,
             "total_checked": total_checked,
-            "total_functions": len(safety_functions),
-            "all_valid_combinations_count": all_valid_combinations_count,
-            "minimal_combinations_count": len(minimal_combinations) if return_minimal_only else None
+            "total_functions": len(safety_functions)
         }
 
 
@@ -462,7 +439,7 @@ class OptimalMeasuresSelector(LLMWorkflowBase, UserInteractionMixin):
         """初始化选择器"""
         super().__init__(auto_load_env=False)  # 不需要OpenAI客户端
         
-        # 要素权重（由用户输入或使用默认值）
+        # 要素权重（固定值）
         self.element_weights = element_weights or {
             'reliability': 3 * (10 ** 2),
             'realtime': 2 * (10 ** 0),
@@ -470,20 +447,22 @@ class OptimalMeasuresSelector(LLMWorkflowBase, UserInteractionMixin):
         }
         self.function_weights = []
     
-    def get_element_weights_from_user(self) -> Dict[str, float]:
-        """从用户获取要素权重"""
-        self.print_section("要素权重（使用默认值，跳过输入）")
-        print("\n已自动使用默认要素权重：")
-        print(f"  - 可靠性 (reliability): {self.element_weights['reliability']}")
-        print(f"  - 实时性 (realtime): {self.element_weights['realtime']}")
-        print(f"  - 信息安全性 (info_security): {self.element_weights['info_security']}")
-        return self.element_weights
-    
     def get_function_weights_from_user(self, safety_functions: List[Dict[str, Any]]) -> List[float]:
         """从用户获取每个安全功能的权重"""
-        self.print_section("安全功能权重（使用默认值，跳过输入）")
-        weights = [1.0 for _ in safety_functions]
-        print(f"\n已自动使用默认权重（全部=1.0）：{weights}")
+        self.print_section("请输入每个安全功能的权重")
+        
+        weights = []
+        for func in safety_functions:
+            print(f"\n【{func['id']}】{func['description']}")
+            weight = self.get_float_input(
+                f"  请输入 {func['id']} 的权重（正数，直接回车默认为1）: ",
+                default=1.0,
+                min_value=0.0001
+            )
+            weights.append(weight)
+            print(f"  ✓ 已设置权重: {weight}")
+        
+        print(f"\n✅ 权重设置完成: {weights}")
         return weights
     
     def calculate_function_measure(self, final_values: Dict[str, float]) -> float:
@@ -597,9 +576,6 @@ class OptimalMeasuresSelector(LLMWorkflowBase, UserInteractionMixin):
 def main():
     """主函数 - 执行完整的三阶段工作流"""
     
-    # 设置日志记录
-    log_file, tee, original_stdout = setup_logging("stage_3")
-    
     try:
         print("\n" + "="*80)
         print("完整的安全措施选择工作流")
@@ -611,7 +587,6 @@ def main():
         print("="*80)
         
         # ========== 阶段1 ==========
-        t_stage1_start = time.time()
         print("\n" + "▶"*40)
         print("开始执行阶段1：为每个安全功能选择措施")
         print("▶"*40)
@@ -624,13 +599,11 @@ def main():
             return
         
         print("\n✅ 阶段1完成")
-        print(f"⏱ 阶段1耗时: {time.time() - t_stage1_start:.2f} 秒")
         
         # 读取安全功能数据
         safety_functions = workflow.load_json("output/stage 2/safety_functions_calculated.json")
         
         # ========== 阶段2 ==========
-        t_stage2_start = time.time()
         print("\n" + "▶"*40)
         print("开始执行阶段2：查找全局措施组合")
         print("▶"*40)
@@ -646,7 +619,6 @@ def main():
             return
         
         print("\n✅ 阶段2完成")
-        print(f"⏱ 阶段2耗时: {time.time() - t_stage2_start:.2f} 秒")
         
         # 保存阶段2结果
         global_selector.save_json(
@@ -663,17 +635,11 @@ def main():
         )
         
         # ========== 阶段3 ==========
-        t_stage3_start = time.time()
         print("\n" + "▶"*40)
         print("开始执行阶段3：选择最优方案")
         print("▶"*40)
         
         optimal_selector = OptimalMeasuresSelector()
-        
-        # 获取要素权重
-        element_weights = optimal_selector.get_element_weights_from_user()
-        
-        # 获取安全功能权重
         function_weights = optimal_selector.get_function_weights_from_user(safety_functions)
         
         result_stage3 = optimal_selector.select_optimal_combination(
@@ -687,7 +653,6 @@ def main():
             return
         
         print("\n✅ 阶段3完成")
-        print(f"⏱ 阶段3耗时: {time.time() - t_stage3_start:.2f} 秒")
         
         # 保存阶段3结果
         optimal_selector.save_json(
@@ -711,16 +676,12 @@ def main():
         print("\n📊 结果摘要：")
         print(f"  - 处理的安全功能数量: {len(safety_functions)}")
         print(f"  - 检查的组合总数: {result_stage2['total_checked']}")
-        print(f"  - 找到的有效组合数量: {result_stage2.get('all_valid_combinations_count', 0)}")
-        if result_stage2.get('minimal_combinations_count'):
-            print(f"  - 过滤后的最小集合数量: {result_stage2['minimal_combinations_count']}")
+        print(f"  - 找到的全局组合数量: {result_stage2['total_count']}")
         print(f"  - 最优方案的要素度量: {result_stage3['optimal_solution']['total_measure']:.10f}")
         
         print("\n📁 输出文件：")
         print("  - output/stage 3/security_measures_selected.json (阶段1结果)")
         print("  - output/stage 3/global_measures_combinations.json (阶段2结果)")
-        if result_stage2.get('return_minimal_only'):
-            print("  - output/stage 3/minimal_filter_details.json (最小集合过滤详情)")
         print("  - output/stage 3/optimal_measures_solution.json (阶段3结果 - 最优方案)")
         
         print("\n💡 最优方案措施列表：")
@@ -737,14 +698,6 @@ def main():
         print(f"\n❌ 执行失败: {e}")
         import traceback
         traceback.print_exc()
-    
-    finally:
-        # 总耗时
-        # 计算从开始到此的总耗时（以阶段1开始为界，若需更精确可在更外层加总计时）
-        # 这里从 main 进入后开始计时
-        # 为避免遗漏，若需要严格总时长，请在最外层再加一个总计时；此处简化不重复
-        # 清理日志
-        teardown_logging(log_file, tee, original_stdout)
 
 
 if __name__ == "__main__":

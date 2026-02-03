@@ -4,11 +4,9 @@
 """
 
 import json
-import time
 from typing import List, Dict, Any
 from ics_tools import ICSToolkit
 from llm_workflow_base import ToolBasedWorkflow
-from log_utils import setup_logging, teardown_logging
 
 
 class SafetyFunctionWorkflow(ToolBasedWorkflow):
@@ -94,31 +92,25 @@ class SafetyFunctionWorkflow(ToolBasedWorkflow):
    - 搜索关键词应包含：功能描述、相关标准(如IEC 61508, IEC 62443)、安全要求
 
 2. **计算信息安全性要素值**：
-   - **对于燃气管网切断阀系统，使用固定的标准等级配置**：
-     * 机密性(C)：中(0.01) - 操作指令需要保密
-     * 完整性(I)：较低(0.01) - 控制指令完整性要求极高
-     * 可用性(A)：较低(0.01) - 系统需要高可用性
-   - 调用calculate_information_security工具（参数可以任意，系统会自动设置为标准值）
-   - **标准结果**：1.0×10^-6 (0.000001) - 固定值
+   - 根据搜索到的知识和功能描述，从量化表中确定机密性(C)、完整性(I)、可用性(A)的数值,请注意C、I、A的定级绝大部分为中，极少数情况下会达到较高，请根据实际情况进行选择
+   - 使用calculate_information_security工具计算：info_security
 
 3. **计算可靠性要素值**：
-   - **对于燃气管网切断阀系统，使用固定的标准等级配置**：
-     * P: 危险失效平均概率 - SIL1(0.01)
-     * H: 人因错误等级 - 低(0.01)
-     * L: 合规性 - 合规(1)
-   - 调用calculate_reliability工具（参数可以任意，系统会自动设置为标准值）
-   - **标准结果**：1.0×10^-4 (0.0001) - 固定值
+   - 根据搜索到的知识和功能描述，从量化表中确定：
+     * P: 危险失效平均概率(SIL等级)
+     * H: 人因错误等级
+     * L: 合规性(0或1)
+   - 使用calculate_reliability工具计算：reliability 
 
 4. **确定实时性要素值**：
    - 根据功能描述和响应时间要求，从量化表中确定响应时间的数值量化值
-   - **切断阀的响应时间通常要求快速(1-2秒内)，对应较小的数值**
    - 该值即为realtime的值(范围0-1)
 
 **重要提示**：
 - 每个安全功能都要独立分析和搜索
 - 严格按照量化表中的数值进行选择
 - 燃气管网系统是高危系统，安全要求通常较高
-- 根据上述指导选择合适的等级，确保计算结果在合理范围内
+- 切断阀的响应时间通常要求快速(1-2秒内)
 - 请依次处理每个安全功能，不要跳过
 
 当所有安全功能都计算完成后，请明确告诉我"所有安全功能计算完成"。
@@ -157,21 +149,19 @@ class SafetyFunctionWorkflow(ToolBasedWorkflow):
         
         # 定义工具调用回调
         def on_tool_call(tool_name, tool_args, tool_result):
-            # 保存计算结果 - 使用固定值确保稳定性
+            # 保存计算结果
             if tool_name == "calculate_information_security" and tool_result.get('success'):
                 for func_id in results.keys():
                     if 'info_security' not in results[func_id]:
-                        # 固定值：信息安全性 = 0.000001 (10^-6)
-                        results[func_id]['info_security'] = 1e-6
-                        print(f"  💾 保存 {func_id} 的信息安全性值: {1e-6} (固定值)")
+                        results[func_id]['info_security'] = tool_result['info_security_value']
+                        print(f"  💾 保存 {func_id} 的信息安全性值: {tool_result['info_security_value']}")
                         break
             
             elif tool_name == "calculate_reliability" and tool_result.get('success'):
                 for func_id in results.keys():
                     if 'reliability' not in results[func_id]:
-                        # 固定值：可靠性 = 0.0001 (10^-4)
-                        results[func_id]['reliability'] = 0.0001
-                        print(f"  💾 保存 {func_id} 的可靠性值: {0.0001} (固定值)")
+                        results[func_id]['reliability'] = tool_result['reliability_value']
+                        print(f"  💾 保存 {func_id} 的可靠性值: {tool_result['reliability_value']}")
                         break
         
         # 定义完成检查
@@ -216,9 +206,9 @@ class SafetyFunctionWorkflow(ToolBasedWorkflow):
                 "element_id_set": func.get('element_id_set', ''),
                 "risk_id_set": func.get('risk_id_set', ''),
                 "actual": {
-                    "info_security": calculated.get('info_security', 1e-6),  # 默认10^-6
-                    "reliability": calculated.get('reliability', 0.0001),    # 默认0.0001
-                    "realtime": calculated.get('realtime', 1.0)              # 默认值
+                    "info_security": calculated.get('info_security', 0.001),
+                    "reliability": calculated.get('reliability', 0.001),
+                    "realtime": calculated.get('realtime', 1.0)  # 默认值
                 }
             }
             
@@ -258,7 +248,7 @@ class SafetyFunctionWorkflow(ToolBasedWorkflow):
         
         result = self.toolkit.collect_safety_requirements(
             safety_functions=functions_with_actual,
-            interactive=False  # 使用默认值，跳过人工输入
+            interactive=True
         )
         
         if result['success']:
@@ -292,36 +282,30 @@ def main():
         print(f"   请先运行 stage_1_LLM.py 生成输出文件: {stage1_output}")
         return
     
-    # 设置日志记录
-    log_file, tee, original_stdout = setup_logging("stage_2")
+    print("\n" + "="*80)
+    print("从 Stage 1 输出加载安全功能")
+    print("="*80)
+    
+    with open(stage1_output, 'r', encoding='utf-8') as f:
+        stage1_data = json.load(f)
+    
+    safety_functions = stage1_data.get('safety_functions', [])
+    hazardous_events = stage1_data.get('hazardous_events', [])
+    
+    if not safety_functions:
+        print("❌ 错误: Stage 1 输出中没有安全功能数据")
+        return
+    
+    print(f"\n✅ 成功加载 {len(safety_functions)} 个安全功能")
+    print(f"✅ 成功加载 {len(hazardous_events)} 个危险事件")
+    
+    # 显示加载的安全功能
+    for func in safety_functions:
+        print(f"\n【{func['id']}】{func['description'][:60]}...")
+    
+    print("="*80)
     
     try:
-        t_start = time.time()
-        print("\n" + "="*80)
-        print("Stage 2: 安全功能要素值计算")
-        print("="*80)
-        print("\n从 Stage 1 输出加载安全功能")
-        print("="*80)
-        
-        with open(stage1_output, 'r', encoding='utf-8') as f:
-            stage1_data = json.load(f)
-        
-        safety_functions = stage1_data.get('safety_functions', [])
-        hazardous_events = stage1_data.get('hazardous_events', [])
-        
-        if not safety_functions:
-            print("❌ 错误: Stage 1 输出中没有安全功能数据")
-            return
-        
-        print(f"\n✅ 成功加载 {len(safety_functions)} 个安全功能")
-        print(f"✅ 成功加载 {len(hazardous_events)} 个危险事件")
-        
-        # 显示加载的安全功能
-        for func in safety_functions:
-            print(f"\n【{func['id']}】{func['description'][:60]}...")
-        
-        print("="*80)
-        
         # 创建工作流
         workflow = SafetyFunctionWorkflow()
         
@@ -334,19 +318,11 @@ def main():
         print("\n" + "="*80)
         print("工作流执行完成!")
         print("="*80)
-        t_end = time.time()
-        print(f"\n⏱ 阶段2耗时: {t_end - t_start:.2f} 秒")
         
     except Exception as e:
         print(f"\n❌ 执行失败: {e}")
         import traceback
         traceback.print_exc()
-    
-    finally:
-        t_end = time.time()
-        print(f"\n⏱ 阶段2耗时: {t_end - t_start:.2f} 秒")
-        # 清理日志
-        teardown_logging(log_file, tee, original_stdout)
 
 
 if __name__ == "__main__":
